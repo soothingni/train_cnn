@@ -32,5 +32,5 @@ def get_callbacks(cfg):
                                  verbose=1,
                                  save_best_only=True,
                                  mode="auto"),
-                 TensorBoard(log_dir='./logs/{cfg.model_name}')]
+                 TensorBoard(log_dir=f'./logs/{cfg.model_name}')]
     return callbacks
