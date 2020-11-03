@@ -1,0 +1,8 @@
+model_name: DenseNet169
+img_size: 224
+batch_size: 16
+hp:
+  pooling: avg
+  dropout: 0.48096156710132754
+  learning_rate: 0.0026239730242428264
+  optimizer: sgd

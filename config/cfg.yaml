@@ -1,0 +1,22 @@
+defaults:
+  - backbone: DenseNet169
+
+class_num: 2
+
+root: C:/image_recognition/FOOD_Recognition/train_cnn/
+
+tune:
+  tf: True
+  max_epochs: 8
+  hyperband_iterations: 3
+
+train:
+  epochs: 20
+
+data:
+  dataset: NIA
+  aug: True
+  train_dir: images/train
+  test_dir: images/val
+
+backbone_options: [DenseNet169, InceptionV3, EfficientNetB3, EfficientNetB7, VGG16]
