@@ -78,21 +78,21 @@ def _tune(cfg, tg, vg):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
-    # define tuner
-    tuner = kt.Hyperband(
-        hypermodel=wrapped_build_func,
-        objective='val_accuracy',
-        max_epochs=cfg.tune.max_epochs,
-        factor=2,
-        hyperband_iterations=cfg.tune.hyperband_iterations,
-        distribution_strategy=tf.distribute.MirroredStrategy(),
-        # directory=save_path
-        directory=os.path.normpath('C:/')
-    )
-
     # hpo
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
+        # define tuner
+        tuner = kt.Hyperband(
+            hypermodel=wrapped_build_func,
+            objective='val_accuracy',
+            max_epochs=cfg.tune.max_epochs,
+            factor=2,
+            hyperband_iterations=cfg.tune.hyperband_iterations,
+            distribution_strategy=tf.distribute.MirroredStrategy(),
+            # directory=save_path
+            directory=os.path.normpath('C:/')
+        )
+
         tuner.search(tg,
                      validation_data=vg,
                      callbacks=[tf.keras.callbacks.EarlyStopping('val_accuracy')]
