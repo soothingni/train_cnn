@@ -1,0 +1,4 @@
+keras-tuner @ git+https://github.com/keras-team/keras-tuner.git@8f0d4550417af1676143499c688434065eb807c9
+hydra-core
+omegaconf==2.0.3
+opencv-python==4.4.0.42
