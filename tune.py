@@ -1,9 +1,10 @@
 # 하이퍼파라미터 탐색을 수행하는
-# keras tuner 객체 생성하는 코드
-
+# keras tuner 객체 생성하고
+# hpo를 수행하는 코드
 
 import os
 
+import hydra
 from omegaconf import OmegaConf
 
 import functools
@@ -58,7 +59,49 @@ def build_model(hp, cfg):
 
     return model
 
-# hpo 후 config 파일 overwrite 하는 함수
+
+# config overwrite 하는 함수
+def overwrite_cfg(cfg, tuner):
+    best_hps = tuner.get_best_hyperparameters()[0]
+
+    # get best hps
+    pooling = best_hps.get("pooling")
+    dropout_rate = best_hps.get("dropout_rate")
+    learning_rate = best_hps.get("learning_rate")
+    optimizer = best_hps.get("optimizer")
+
+    # overwrite config file
+    config_path = os.path.join(cfg.root, f"config/backbone/{cfg.model_name}.yaml")
+    config = OmegaConf.load(config_path)
+    config.hp.pooling = pooling
+    config.hp.dropout = dropout_rate
+    config.hp.learning_rate = learning_rate
+    config.hp.optimizer = optimizer
+    OmegaConf.save(config, config_path)
+
+    print(f"Config for {cfg.model_name} overwritten")
+
+# # search epoch마다 config 파일 overwrite 하는 callback
+# class CustomCallback(BaseTuner, TunerCallback):
+#     def __init__(self, cfg):
+#         self.cfg = cfg
+#
+#     def on_epoch_begin(self, epoch, logs=None):
+#         print("epoch successfully started")
+#         print(self.oracle)
+#         print(self.tuner)
+#         print(self.trial)
+#
+#     def on_epoch_end(self, epoch, logs=None):
+#         print(self.oracle)
+#         print(self.tuner)
+#         print(self.trial)
+#         best_trials = self.oracle.get_best_trials()
+#         if len(best_trials) > 0 and self.trial.score > best_trials[0].score:
+#             overwrite_cfg(self.cfg, self.tuner)
+
+
+# hpo 하는 함수
 def _tune(cfg, tg, vg):
     """
     Arguments:
@@ -94,43 +137,36 @@ def _tune(cfg, tg, vg):
         )
 
         tuner.search(tg,
-                     validation_data=vg,
-                     callbacks=[tf.keras.callbacks.EarlyStopping('val_accuracy')]
-                     )
+                     validation_data=vg)
 
-    best_hps = tuner.get_best_hyperparameters()[0]
+    # callback에서 overwrite 안 할 경우 아래 실행
+    overwrite_cfg(cfg, tuner)
 
-    # get best hps
-    pooling = best_hps.get("pooling")
-    dropout_rate = best_hps.get("dropout_rate")
-    learning_rate = best_hps.get("learning_rate")
-    optimizer = best_hps.get("optimizer")
+@hydra.main(config_path="config", config_name="cfg")
+def tune(cfg):
 
-    # overwrite config file
-    config_path = os.path.join(cfg.root, f"config/backbone/{cfg.model_name}.yaml")
-    config = OmegaConf.load(config_path)
-    config.hp.pooling = pooling
-    config.hp.dropout = dropout_rate
-    config.hp.learning_rate = learning_rate
-    config.hp.optimizer = optimizer
-    OmegaConf.save(config, config_path)
+    # get generator
+    tg = train_generator(cfg)
+    vg = val_generator(cfg)
 
-    print(f"Config for {cfg.model_name} overwritten")
+    # hpo
+    print()
+    print(f"[TUNING] {cfg.model_name} against {cfg.data.dataset} for {cfg.tune.max_epochs} epochs")
+    print()
 
+    _tune(cfg, tg, vg)
 
-def _train(cfg, tg, vg):
-    # training 실행 함수
-    callbacks = get_callbacks(cfg)
-    strategy = tf.distribute.MirroredStrategy()
-    with strategy.scope():
-        model = get_model(cfg)
-        model.fit(tg, validation_data=vg, callbacks=callbacks, epochs=cfg.train.epochs)
+if __name__ == "__main__":
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Currently, memory growth needs to be the same across GPUs
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+            print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        except RuntimeError as e:
+            # Memory growth must be set before GPUs have been initialized
+            print(e)
 
-
-# def _continue_train(cfg):
-#     # 이어서 학습하는 함수
-#
-#     tg = train_generator(cfg)
-#     vg = val_generator(cfg)
-#
-#     return None
+    tune()
