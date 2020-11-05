@@ -10,9 +10,13 @@ from omegaconf import OmegaConf
 import functools
 
 import kerastuner as kt
+from kerastuner.tuners.hyperband import Hyperband, HyperbandOracle
 from generator import train_generator, val_generator
 from models import get_model
 from utils import get_callbacks
+
+import sys
+from io import StringIO
 
 import tensorflow as tf
 import kerastuner as kt
@@ -79,26 +83,43 @@ def overwrite_cfg(cfg, tuner):
     config.hp.optimizer = optimizer
     OmegaConf.save(config, config_path)
 
+    print()
     print(f"Config for {cfg.model_name} overwritten")
+    print()
 
-# # search epoch마다 config 파일 overwrite 하는 callback
-# class CustomCallback(BaseTuner, TunerCallback):
-#     def __init__(self, cfg):
-#         self.cfg = cfg
-#
-#     def on_epoch_begin(self, epoch, logs=None):
-#         print("epoch successfully started")
-#         print(self.oracle)
-#         print(self.tuner)
-#         print(self.trial)
-#
-#     def on_epoch_end(self, epoch, logs=None):
-#         print(self.oracle)
-#         print(self.tuner)
-#         print(self.trial)
-#         best_trials = self.oracle.get_best_trials()
-#         if len(best_trials) > 0 and self.trial.score > best_trials[0].score:
-#             overwrite_cfg(self.cfg, self.tuner)
+# TODO: 출력 가로채는 방식 말고, tuner 객체에서 score 가져오는 것 적용 (or trial 객체 접근법 알아내서 적용)
+# tuner score 가져오는 함수
+def get_score(tuner):
+    original_stdout = sys.stdout
+    sys.stdout = StringIO()  # 원래는 모니터로 가던 출력값을 메모리로 가로채도록
+
+    tuner.results_summary(1)
+
+    contents = sys.stdout.getvalue()  # 메모리로 가로챈 출력값을 `contents` 변수에 저장
+    sys.stdout = original_stdout
+
+    score = contents.split('\n')[-2].split(' ')[-1]
+
+    return float(score)
+
+# TODO: epoch마다 말고, trial 마다 업데이트 가능하게 적용
+# search epoch마다 config 파일 overwrite 하는 callback
+class CustomCallback(tf.keras.callbacks.Callback):
+    def __init__(self, cfg, tuner):
+        self.cfg = cfg
+        self.tuner = tuner
+
+    def on_epoch_end(self, epoch, logs=None):
+        print('this works!')
+        best_score = get_score(self.tuner)
+        current_best_value = cfg.hp.best_value
+
+        # 첫 trial 일 시
+        if current_best_value == 0 and best_score > 0.5:
+            overwrite_cfg(cfg, tuner)
+
+        elif current_best_value != 0 and best_score > current_best_value:
+            overwrite_cfg(cfg, tuner)
 
 
 # hpo 하는 함수
@@ -137,7 +158,9 @@ def _tune(cfg, tg, vg):
         )
 
         tuner.search(tg,
-                     validation_data=vg)
+                     validation_data=vg,
+                     callbacks = [CustomCallback(cfg, tuner)]
+                     )
 
     # callback에서 overwrite 안 할 경우 아래 실행
     overwrite_cfg(cfg, tuner)
