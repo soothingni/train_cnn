@@ -277,8 +277,8 @@ def _tune(cfg, tg, vg):
                      callbacks = [EarlyStopping(monitor='val_accuracy', mode='max', baseline=0.99]
                      )
 
-    # callback에서 overwrite 안 할 경우 아래 실행
-    overwrite_cfg(cfg, tuner)
+#     # callback에서 overwrite 안 할 경우 아래 실행
+#     overwrite_cfg(cfg, tuner)
 
 @hydra.main(config_path="config", config_name="cfg")
 def tune(cfg):
