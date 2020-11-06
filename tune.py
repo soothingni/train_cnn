@@ -274,7 +274,7 @@ def _tune(cfg, tg, vg):
 
         tuner.search(tg,
                      validation_data=vg,
-                     callbacks = [EarlyStopping(monitor='val_accuracy', mode='max', baseline=1.0)]
+                     callbacks = [EarlyStopping(monitor='val_accuracy', mode='max', baseline=0.99]
                      )
 
     # callback에서 overwrite 안 할 경우 아래 실행
