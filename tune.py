@@ -25,6 +25,7 @@ from tensorflow.keras.backend import clear_session
 from tensorflow.keras.layers import Input, Conv2D, Dense, Flatten, AveragePooling2D, GlobalAveragePooling2D, MaxPooling2D, GlobalMaxPooling2D, BatchNormalization, Activation, Dropout
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.optimizers import SGD, Adam
+from tensorflow.keras.callbacks import EarlyStopping
 
 from tensorflow.keras.models import Model, load_model
 
@@ -175,14 +176,21 @@ class MyHyperband(Hyperband):
 
         #overwrite check
         best_trials = self.oracle.get_best_trials()
-        current_best_value = self.cfg.hp.best_value
+        config_path = os.path.join(self.cfg.root, f"config/backbone/{self.cfg.model_name}.yaml")
+        # 새로운 값으로 다시 불러오기 위해 config 매번 새로 로드
+        config_best_value = OmegaConf.load(config_path).hp.best_value
+        config_best_value = float(self.cfg.hp.best_value)
+        current_value = trial.score
+        current_vale = float(current_value)
+        # print(f"config_best_value: {type(config_best_value)}, {config_best_value}")
+        # print(f"current_value: {type(current_value)}, {current_value}")
         if len(best_trials) > 0:
-          best_score = best_trials[0].score
-          if best_score > current_best_value:
-            overwrite_cfg(self, self.cfg, best_score)
-        else:
-            best_score = None
-            pass
+          if current_value > config_best_value:
+            overwrite_cfg(self, self.cfg, current_value)
+          else:
+            print()
+            print(f"Current value({current_value}) is lower than config best_value({config_best_value}). Not updating config")
+            print()
 
     def search(self, *fit_args, **fit_kwargs):
         """Performs a search for best hyperparameter configuations.
@@ -265,7 +273,8 @@ def _tune(cfg, tg, vg):
         )
 
         tuner.search(tg,
-                     validation_data=vg
+                     validation_data=vg,
+                     callbacks = [EarlyStopping(monitor='val_accuracy', mode='max', baseline=1.0)]
                      )
 
     # callback에서 overwrite 안 할 경우 아래 실행
