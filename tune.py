@@ -11,6 +11,7 @@ import functools
 
 import kerastuner as kt
 from kerastuner.tuners.hyperband import Hyperband, HyperbandOracle
+from kerastuner.engine import trial as trial_module
 from generator import train_generator, val_generator
 from models import get_model
 from utils import get_callbacks
@@ -19,7 +20,6 @@ import sys
 from io import StringIO
 
 import tensorflow as tf
-import kerastuner as kt
 from tensorflow.keras import applications
 from tensorflow.keras.backend import clear_session
 from tensorflow.keras.layers import Input, Conv2D, Dense, Flatten, AveragePooling2D, GlobalAveragePooling2D, MaxPooling2D, GlobalMaxPooling2D, BatchNormalization, Activation, Dropout
@@ -65,7 +65,7 @@ def build_model(hp, cfg):
 
 
 # config overwrite 하는 함수
-def overwrite_cfg(cfg, tuner):
+def overwrite_cfg(tuner, cfg, best_score):
     best_hps = tuner.get_best_hyperparameters()[0]
 
     # get best hps
@@ -81,45 +81,151 @@ def overwrite_cfg(cfg, tuner):
     config.hp.dropout = dropout_rate
     config.hp.learning_rate = learning_rate
     config.hp.optimizer = optimizer
+    config.hp.best_value = float(best_score)
     OmegaConf.save(config, config_path)
 
     print()
     print(f"Config for {cfg.model_name} overwritten")
     print()
 
-# TODO: 출력 가로채는 방식 말고, tuner 객체에서 score 가져오는 것 적용 (or trial 객체 접근법 알아내서 적용)
-# tuner score 가져오는 함수
-def get_score(tuner):
-    original_stdout = sys.stdout
-    sys.stdout = StringIO()  # 원래는 모니터로 가던 출력값을 메모리로 가로채도록
+class MyHyperband(Hyperband):
+    """Variation of HyperBand algorithm.
+    Reference:
+        Li, Lisha, and Kevin Jamieson.
+        ["Hyperband: A Novel Bandit-Based
+         Approach to Hyperparameter Optimization."
+        Journal of Machine Learning Research 18 (2018): 1-52](
+            http://jmlr.org/papers/v18/16-558.html).
+    # Arguments
+        hypermodel: Instance of HyperModel class
+            (or callable that takes hyperparameters
+            and returns a Model instance).
+        objective: String. Name of model metric to minimize
+            or maximize, e.g. "val_accuracy".
+        max_epochs: Int. The maximum number of epochs to train one model. It is
+          recommended to set this to a value slightly higher than the expected time
+          to convergence for your largest Model, and to use early stopping during
+          training (for example, via `tf.keras.callbacks.EarlyStopping`).
+        factor: Int. Reduction factor for the number of epochs
+            and number of models for each bracket.
+        hyperband_iterations: Int >= 1. The number of times to iterate over the full
+          Hyperband algorithm. One iteration will run approximately
+          `max_epochs * (math.log(max_epochs, factor) ** 2)` cumulative epochs
+          across all trials. It is recommended to set this to as high a value
+          as is within your resource budget.
+        seed: Int. Random seed.
+        hyperparameters: HyperParameters class instance.
+            Can be used to override (or register in advance)
+            hyperparamters in the search space.
+        tune_new_entries: Whether hyperparameter entries
+            that are requested by the hypermodel
+            but that were not specified in `hyperparameters`
+            should be added to the search space, or not.
+            If not, then the default value for these parameters
+            will be used.
+        allow_new_entries: Whether the hypermodel is allowed
+            to request hyperparameter entries not listed in
+            `hyperparameters`.
+        **kwargs: Keyword arguments relevant to all `Tuner` subclasses.
+            Please see the docstring for `Tuner`.
+    """
 
-    tuner.results_summary(1)
-
-    contents = sys.stdout.getvalue()  # 메모리로 가로챈 출력값을 `contents` 변수에 저장
-    sys.stdout = original_stdout
-
-    score = contents.split('\n')[-2].split(' ')[-1]
-
-    return float(score)
-
-# TODO: epoch마다 말고, trial 마다 업데이트 가능하게 적용
-# search epoch마다 config 파일 overwrite 하는 callback
-class CustomCallback(tf.keras.callbacks.Callback):
-    def __init__(self, cfg, tuner):
+    def __init__(self,
+                 hypermodel,
+                 objective,
+                 max_epochs,
+                 factor=3,
+                 hyperband_iterations=1,
+                 seed=None,
+                 hyperparameters=None,
+                 tune_new_entries=True,
+                 allow_new_entries=True,
+                 cfg = None,
+                 **kwargs):
+        oracle = HyperbandOracle(
+            objective,
+            max_epochs=max_epochs,
+            factor=factor,
+            hyperband_iterations=hyperband_iterations,
+            seed=seed,
+            hyperparameters=hyperparameters,
+            tune_new_entries=tune_new_entries,
+            allow_new_entries=allow_new_entries)
+        super(Hyperband, self).__init__(
+            oracle=oracle,
+            hypermodel=hypermodel,
+            **kwargs)
         self.cfg = cfg
-        self.tuner = tuner
 
-    def on_epoch_end(self, epoch, logs=None):
-        print('this works!')
-        best_score = get_score(self.tuner)
-        current_best_value = cfg.hp.best_value
+    def on_trial_end(self, trial):
+        """A hook called after each trial is run.
+        # Arguments:
+            trial: A `Trial` instance.
+        """
+        # Send status to Logger
+        if self.logger:
+            self.logger.report_trial_state(trial.trial_id, trial.get_state())
 
-        # 첫 trial 일 시
-        if current_best_value == 0 and best_score > 0.5:
-            overwrite_cfg(cfg, tuner)
+        self.oracle.end_trial(
+            trial.trial_id, trial_module.TrialStatus.COMPLETED)
+        self.oracle.update_space(trial.hyperparameters)
+        # Display needs the updated trial scored by the Oracle.
+        self._display.on_trial_end(self.oracle.get_trial(trial.trial_id))
+        self.save()
 
-        elif current_best_value != 0 and best_score > current_best_value:
-            overwrite_cfg(cfg, tuner)
+        #overwrite check
+        best_trials = self.oracle.get_best_trials()
+        current_best_value = self.cfg.hp.best_value
+        if len(best_trials) > 0:
+          best_score = best_trials[0].score
+          if best_score > current_best_value:
+            overwrite_cfg(self, self.cfg, best_score)
+        else:
+            best_score = None
+            pass
+
+    def search(self, *fit_args, **fit_kwargs):
+        """Performs a search for best hyperparameter configuations.
+        # Arguments:
+            *fit_args: Positional arguments that should be passed to
+              `run_trial`, for example the training and validation data.
+            *fit_kwargs: Keyword arguments that should be passed to
+              `run_trial`, for example the training and validation data.
+        """
+        if 'verbose' in fit_kwargs:
+            self._display.verbose = fit_kwargs.get('verbose')
+        self.on_search_begin()
+        while True:
+            trial = self.oracle.create_trial(self.tuner_id)
+            if trial.status == trial_module.TrialStatus.STOPPED:
+                # Oracle triggered exit.
+                tf.get_logger().info('Oracle triggered exit')
+                break
+            if trial.status == trial_module.TrialStatus.IDLE:
+                # Oracle is calculating, resend request.
+                continue
+
+            self.on_trial_begin(trial)
+            self.run_trial(trial, *fit_args, **fit_kwargs)
+            self.on_trial_end(trial)
+        self.on_search_end()
+
+    def run_trial(self, trial, *fit_args, **fit_kwargs):
+        hp = trial.hyperparameters
+        if 'tuner/epochs' in hp.values:
+            fit_kwargs['epochs'] = hp.values['tuner/epochs']
+            fit_kwargs['initial_epoch'] = hp.values['tuner/initial_epoch']
+        super(MyHyperband, self).run_trial(trial, *fit_args, **fit_kwargs)
+
+    def _build_model(self, hp):
+        model = super(MyHyperband, self)._build_model(hp)
+        if 'tuner/trial_id' in hp.values:
+            trial_id = hp.values['tuner/trial_id']
+            history_trial = self.oracle.get_trial(trial_id)
+            # Load best checkpoint from this trial.
+            model.load_weights(self._get_checkpoint_fname(
+                history_trial.trial_id, history_trial.best_step))
+        return model
 
 
 # hpo 하는 함수
@@ -146,7 +252,7 @@ def _tune(cfg, tg, vg):
     strategy = tf.distribute.MirroredStrategy()
     with strategy.scope():
         # define tuner
-        tuner = kt.Hyperband(
+        tuner = MyHyperband(
             hypermodel=wrapped_build_func,
             objective='val_accuracy',
             max_epochs=cfg.tune.max_epochs,
@@ -154,12 +260,12 @@ def _tune(cfg, tg, vg):
             hyperband_iterations=cfg.tune.hyperband_iterations,
             distribution_strategy=tf.distribute.MirroredStrategy(),
             # directory=save_path
-            directory=os.path.normpath('C:/')
+            directory=os.path.normpath('C:/'),
+            cfg = cfg
         )
 
         tuner.search(tg,
-                     validation_data=vg,
-                     callbacks = [CustomCallback(cfg, tuner)]
+                     validation_data=vg
                      )
 
     # callback에서 overwrite 안 할 경우 아래 실행
