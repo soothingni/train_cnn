@@ -179,13 +179,13 @@ class MyHyperband(Hyperband):
         config_path = os.path.join(self.cfg.root, f"config/backbone/{self.cfg.model_name}.yaml")
         # 새로운 값으로 다시 불러오기 위해 config 매번 새로 로드
         config_best_value = OmegaConf.load(config_path).hp.best_value
-        config_best_value = float(self.cfg.hp.best_value)
+        config_best_value = float(config_best_value)
         current_value = trial.score
         current_vale = float(current_value)
         # print(f"config_best_value: {type(config_best_value)}, {config_best_value}")
         # print(f"current_value: {type(current_value)}, {current_value}")
         if len(best_trials) > 0:
-          if current_value > config_best_value:
+          if current_value >= config_best_value:
             overwrite_cfg(self, self.cfg, current_value)
           else:
             print()
