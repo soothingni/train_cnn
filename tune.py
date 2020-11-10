@@ -268,13 +268,13 @@ def _tune(cfg, tg, vg):
             hyperband_iterations=cfg.tune.hyperband_iterations,
             distribution_strategy=tf.distribute.MirroredStrategy(),
             # directory=save_path
-            directory=os.path.normpath('C:/'),
+            directory=save_path,
             cfg = cfg
         )
 
         tuner.search(tg,
                      validation_data=vg,
-                     callbacks = [EarlyStopping(monitor='val_accuracy', mode='max', baseline=0.99]
+                     callbacks = [EarlyStopping(monitor='val_accuracy', mode='max', baseline=0.99)]
                      )
 
 #     # callback에서 overwrite 안 할 경우 아래 실행
